@@ -468,6 +468,87 @@ def test_migration_survives_a_corrupt_build_receipt(tmp_path) -> None:
     assert canonical["retail_identity"]["identity_state"] == "unrecorded"
 
 
+# ---------------------------------------------------------------------------
+# Framework repository pin (D1a). The estate carried four values for one repo:
+# a local path, a stale `mstan` alias, and a `.git` suffix inconsistency.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("https://github.com/Alexbeav/psxrecomp", manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+    ("https://github.com/Alexbeav/psxrecomp.git", manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+    ("https://github.com/mstan/psxrecomp", manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+    ("https://github.com/mstan/psxrecomp.git", manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+    ("https://github.com/RetroPortingToolKit/psxrecomp.git",
+     manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+    ("https://github.com/RetroPortingToolKit/psxrecomp",
+     manifest.CANONICAL_FRAMEWORK_REPOSITORY),
+])
+def test_normalise_repository_maps_aliases(raw, expected) -> None:
+    assert manifest.normalise_repository(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    "I:/Projects/PSX-References/_local/sources/psxrecomp-fork",
+    "C:\\Projects\\psxrecomp",
+    "psxrecomp",
+    "",
+    None,
+])
+def test_normalise_repository_replaces_non_urls(raw) -> None:
+    """A local path resolves only on one machine, so it cannot be a pin."""
+    assert manifest.normalise_repository(raw) == manifest.CANONICAL_FRAMEWORK_REPOSITORY
+
+
+def test_validator_rejects_a_local_path_as_a_pin(tmp_path) -> None:
+    text = SHAPE_B.replace(
+        'repository = "https://github.com/Alexbeav/psxrecomp.git"',
+        'repository = "I:/Projects/PSX-References/_local/sources/psxrecomp-fork"',
+    )
+    workspace = _workspace(tmp_path, "azure-dreams", text)
+    document, shape = manifest.load(workspace)
+    problems = "\n".join(manifest.validate(document, shape, workspace))
+    assert "not an https URL" in problems
+
+
+def test_validator_rejects_the_mstan_alias(tmp_path) -> None:
+    text = SHAPE_B.replace(
+        'repository = "https://github.com/Alexbeav/psxrecomp.git"',
+        'repository = "https://github.com/mstan/psxrecomp"',
+    )
+    workspace = _workspace(tmp_path, "azure-dreams", text)
+    document, shape = manifest.load(workspace)
+    problems = "\n".join(manifest.validate(document, shape, workspace))
+    assert "is an alias" in problems
+
+
+def test_migration_replaces_a_local_path_pin(tmp_path) -> None:
+    text = SHAPE_A.replace(
+        'repository = "https://github.com/Alexbeav/psxrecomp"',
+        'repository = "I:/Projects/PSX-References/_local/sources/psxrecomp-fork"',
+    )
+    workspace = _workspace(tmp_path, "apocalypse", text)
+    document, shape = manifest.load(workspace)
+    canonical, _, notes = manifest.migrate(document, shape, workspace)
+    assert canonical["framework"]["repository"] == manifest.CANONICAL_FRAMEWORK_REPOSITORY
+    assert any("framework.repository" in note for note in notes)
+
+
+def test_migrated_framework_repository_always_validates(tmp_path) -> None:
+    """Every historical form must migrate to something the validator accepts."""
+    for index, raw in enumerate([
+        "https://github.com/Alexbeav/psxrecomp",
+        "https://github.com/mstan/psxrecomp",
+        "I:/Projects/PSX-References/_local/sources/psxrecomp-fork",
+    ]):
+        text = SHAPE_A.replace('repository = "https://github.com/Alexbeav/psxrecomp"',
+                               f'repository = "{raw}"')
+        workspace = _workspace(tmp_path, f"apocalypse-{index}", text)
+        document, shape = manifest.load(workspace)
+        canonical, references, _ = manifest.migrate(document, shape, workspace)
+        parsed = tomllib.loads(manifest.render(canonical, references))
+        assert manifest.validate(parsed, "v2", workspace) == [], raw
+
+
 def test_rendered_output_is_valid_toml_for_every_shape(tmp_path) -> None:
     cases = [("apocalypse", SHAPE_A), ("azure-dreams", SHAPE_B),
              ("Wipeout-3-Special-Edition-Recomp", SHAPE_M)]

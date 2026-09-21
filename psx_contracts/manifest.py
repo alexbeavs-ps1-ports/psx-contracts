@@ -39,7 +39,56 @@ SHAPES = {
 
 # The canonical section-set. `schema_version` and `bios`/`validation`/`release`
 # are optional, so this is matched as a required subset rather than an equality.
+# The canonical section-set. `bios`/`validation`/`release` are optional, so this
+# is matched as a required subset rather than an equality.
 V2_REQUIRED = ("platform", "title", "retail_identity", "framework")
+
+# The framework repository is pinned to one canonical URL. Historical values in
+# the estate include a local filesystem path, a stale `mstan` alias (the project
+# was renamed to RetroPortingToolKit), and a `.git` suffix inconsistency.
+CANONICAL_FRAMEWORK_REPOSITORY = "https://github.com/RetroPortingToolKit/psxrecomp"
+FRAMEWORK_REPOSITORY_ALIASES = {
+    "https://github.com/mstan/psxrecomp": CANONICAL_FRAMEWORK_REPOSITORY,
+    "https://github.com/mstan/psxrecomp.git": CANONICAL_FRAMEWORK_REPOSITORY,
+    "https://github.com/RetroPortingToolKit/psxrecomp.git": CANONICAL_FRAMEWORK_REPOSITORY,
+    "https://github.com/Alexbeav/psxrecomp": CANONICAL_FRAMEWORK_REPOSITORY,
+    "https://github.com/Alexbeav/psxrecomp.git": CANONICAL_FRAMEWORK_REPOSITORY,
+}
+
+
+def normalise_repository(value: Any) -> str:
+    """Return the canonical framework URL.
+
+    A local filesystem path is not a repository. It resolves only on the machine
+    that wrote it, so it cannot be a pin; such a value is replaced with the
+    canonical URL rather than preserved.
+    """
+    text = str(value or "").strip()
+    if text.lower().startswith("https://github.com/"):
+        return FRAMEWORK_REPOSITORY_ALIASES.get(text, text)
+    return CANONICAL_FRAMEWORK_REPOSITORY
+
+
+def _check_repository(
+    value: Any, label: str, problems: list[str]
+) -> None:
+    text = str(value or "").strip()
+    if not text:
+        return
+    if not text.lower().startswith("https://"):
+        problems.append(
+            f"{label} is not an https URL: '{text}'. A local path cannot be a pin."
+        )
+        return
+    if text != CANONICAL_FRAMEWORK_REPOSITORY:
+        canonical = FRAMEWORK_REPOSITORY_ALIASES.get(text)
+        if canonical:
+            problems.append(f"{label} '{text}' is an alias; use '{canonical}'")
+        else:
+            problems.append(
+                f"{label} '{text}' is not the canonical framework repository "
+                f"'{CANONICAL_FRAMEWORK_REPOSITORY}'"
+            )
 
 IDENTITY_STATES = ("verified", "unrecorded", "inherited")
 VALIDATION_STATES = ("not_run", "pass", "fail")
@@ -175,6 +224,9 @@ def validate(document: dict[str, Any], shape: str, workspace: Path) -> list[str]
 
     # Framework pin. commit is the authority; source_commit is derived from it.
     framework = _table(document, "framework")
+    _check_repository(
+        framework.get("repository"), "framework.repository", problems
+    )
     commit = _require(document, "framework", "commit", problems)
     if isinstance(commit, str) and commit and not HEX40.match(commit):
         problems.append("framework.commit: expected 40 lowercase hex characters")
@@ -511,9 +563,13 @@ def migrate(
 
     pin_raw = framework.get("pin_status")
     pin = _normalise_pin(pin_raw)
+    repo_raw = framework.get("repository")
+    repo = normalise_repository(repo_raw)
+    if repo_raw is not None and repo != repo_raw:
+        notes.append(f"framework.repository '{repo_raw}' -> '{repo}'")
     new_framework: dict[str, Any] = {
         "name": framework.get("name", ""),
-        "repository": framework.get("repository", ""),
+        "repository": repo,
         "commit": framework.get("commit", ""),
         "tree": framework.get("tree", ""),
         "license": framework.get("license", ""),
