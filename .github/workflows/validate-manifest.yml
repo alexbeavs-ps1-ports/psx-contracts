@@ -1,0 +1,142 @@
+# Reusable manifest gate for PSX title repositories.
+#
+# Call it from a title repository:
+#
+#   jobs:
+#     manifest:
+#       uses: alexbeavs-ps1-ports/psx-contracts/.github/workflows/validate-manifest.yml@v1
+#
+# Advisory by default: it reports problems and always succeeds, so a fleet can
+# adopt it without blocking releases on pre-existing divergence. Pass
+# `strict: true` to fail the job when a manifest does not conform.
+#
+# The gate reads only `project-manifest.toml`. It does not build anything and
+# does not inspect the release workflow.
+
+name: Validate manifest
+
+on:
+  workflow_call:
+    inputs:
+      strict:
+        description: Fail the job when a manifest does not conform. Advisory when false.
+        required: false
+        type: boolean
+        default: false
+      manifest-path:
+        description: Path to the manifest, relative to the repository root.
+        required: false
+        type: string
+        default: project-manifest.toml
+      workspace:
+        description: >
+          Workspace directory holding the manifest. Defaults to the repository
+          root. The manifest's title.slug must equal this directory's name.
+        required: false
+        type: string
+        default: '.'
+      contracts-ref:
+        description: >
+          Ref of psx-contracts to use. Pin this in the caller to make the policy
+          version explicit.
+        required: false
+        type: string
+        default: v1
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: project-manifest.toml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the title repository
+        uses: actions/checkout@v4
+
+      - name: Check out the contracts
+        uses: actions/checkout@v4
+        with:
+          repository: alexbeavs-ps1-ports/psx-contracts
+          ref: ${{ inputs.contracts-ref }}
+          path: .psx-contracts
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check the manifest is present
+        id: presence
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ inputs.manifest-path }}
+        run: |
+          if [[ -f "${MANIFEST_PATH}" ]]; then
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::${MANIFEST_PATH} is not present in this repository."
+          fi
+
+      - name: Validate
+        id: validate
+        if: steps.presence.outputs.present == 'true'
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ inputs.manifest-path }}
+          WORKSPACE: ${{ inputs.workspace }}
+          STRICT: ${{ inputs.strict }}
+          PYTHONPATH: ${{ github.workspace }}/.psx-contracts
+        run: |
+          set -uo pipefail
+
+          # `workspace` names a directory; the manifest lives inside it. When the
+          # caller overrides the manifest path, validate that path directly.
+          if [[ "${WORKSPACE}" == "." && "${MANIFEST_PATH}" != "project-manifest.toml" ]]; then
+            TARGET="${MANIFEST_PATH}"
+          else
+            TARGET="${WORKSPACE}"
+          fi
+
+          set +e
+          OUTPUT=$(python -m psx_contracts.manifest validate "${TARGET}" 2>&1)
+          STATUS=$?
+          set -e
+
+          echo "## Manifest validation" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          echo "${OUTPUT}" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "${OUTPUT}"
+
+          if [[ "${STATUS}" -eq 0 ]]; then
+            echo "result=pass" >> "${GITHUB_OUTPUT}"
+            echo "Manifest conforms to schema v2." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          echo "result=fail" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${STRICT}" == "true" ]]; then
+            echo "::error::Manifest does not conform to schema v2."
+            echo "**Result: FAIL (strict)**" >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+
+          # Advisory: annotate, summarise, and succeed.
+          echo "::warning::Manifest does not conform to schema v2. Advisory mode: not blocking."
+          {
+            echo "**Result: does not conform (advisory)**"
+            echo ""
+            echo "This repository is not yet migrated. The gate is not blocking."
+            echo "See the migration tool:"
+            echo ""
+            echo '```'
+            echo "python -m psx_contracts.manifest migrate . --write"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit 0

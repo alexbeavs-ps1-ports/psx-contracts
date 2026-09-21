@@ -1,0 +1,25 @@
+# Example caller for a title repository.
+#
+# Copy this to `.github/workflows/manifest.yml` in the title repository.
+# Do not edit the gate itself here — it lives in psx-contracts and is called by
+# tag, so a policy change reaches every caller at once.
+
+name: Manifest
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    uses: alexbeavs-ps1-ports/psx-contracts/.github/workflows/validate-manifest.yml@v1
+
+    # Advisory by default. Uncomment to make a non-conforming manifest fail the
+    # job. Do this once the repository is migrated to schema v2.
+    #
+    # with:
+    #   strict: true

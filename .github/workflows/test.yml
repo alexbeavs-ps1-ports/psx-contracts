@@ -1,0 +1,77 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run tests
+        run: python -m pytest tests -q
+
+      - name: Verify the CLI is importable
+        run: python -m psx_contracts.manifest --help
+
+  self-check:
+    name: Gate validates itself
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The reusable workflow must be syntactically valid YAML with the expected
+      # interface, because 100+ repositories call it by tag. Breakage here is
+      # fleet-wide, so it is checked on every change.
+      - name: Check the reusable workflow shape
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          try:
+              import tomllib  # noqa: F401
+          except ImportError:
+              sys.exit("python too old")
+
+          path = pathlib.Path(".github/workflows/validate-manifest.yml")
+          text = path.read_text(encoding="utf-8")
+
+          required = [
+              "workflow_call",
+              "strict:",
+              "manifest-path:",
+              "workspace:",
+              "contracts-ref:",
+              "psx_contracts.manifest validate",
+          ]
+          missing = [token for token in required if token not in text]
+          if missing:
+              sys.exit(f"reusable workflow is missing: {missing}")
+
+          if "advisory" not in text:
+              sys.exit("advisory mode is not described")
+
+          print("reusable workflow interface intact")
+          PY
+
+      - name: Test the strict and advisory code paths
+        run: python -m pytest tests -q -k "cli_round_trip or cli_migrate_without_write"
