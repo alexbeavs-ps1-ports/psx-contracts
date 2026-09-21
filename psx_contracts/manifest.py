@@ -627,12 +627,19 @@ def migrate(
     publication = binding.get("publication")
     if not publication:
         status = str(release.get("status", ""))
-        publication = "preparatory" if status == "candidate" else (status or "preparatory")
         if status == "candidate":
+            # Shape A recorded `candidate` for the 26 wave-3 titles. Those
+            # releases DID publish: the wave receipt carries status = "published",
+            # a publication_date, a publication receipt, a catalogue submission,
+            # and a public_release URL for all 26. Mapping to `preparatory` would
+            # understate them, so `published` is correct.
+            publication = "published"
             notes.append(
-                "release.status 'candidate' -> publication 'preparatory'; "
-                "CONFIRM, wave-3 candidates did publish"
+                "release.status 'candidate' -> publication 'published' "
+                "(wave-3 receipt confirms all 26 published)"
             )
+        else:
+            publication = status or "preparatory"
     new_binding: dict[str, Any] = {
         "source_commit": source_commit,
         "title_version": (binding.get("current_title_version")

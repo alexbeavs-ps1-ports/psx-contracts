@@ -348,13 +348,13 @@ def test_migration_maps_implementation_state_to_graduation(tmp_path) -> None:
     assert any("implementation_state" in note for note in notes)
 
 
-def test_migration_flags_the_candidate_publication_ambiguity(tmp_path) -> None:
-    """`candidate` mapped to `preparatory` is interpretive and must be flagged."""
+def test_migration_maps_candidate_to_published(tmp_path) -> None:
+    """`candidate` is a wave-3 status; all 26 of those releases published."""
     workspace = _workspace(tmp_path, "apocalypse", SHAPE_A)
     document, shape = manifest.load(workspace)
     canonical, _, notes = manifest.migrate(document, shape, workspace)
-    assert canonical["release_binding"]["publication"] == "preparatory"
-    assert any("CONFIRM" in note for note in notes)
+    assert canonical["release_binding"]["publication"] == "published"
+    assert any("wave-3 receipt confirms" in note for note in notes)
 
 
 def test_migration_is_deterministic(tmp_path) -> None:
