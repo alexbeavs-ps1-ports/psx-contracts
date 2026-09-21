@@ -40,6 +40,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
       # The reusable workflow must be syntactically valid YAML with the expected
       # interface, because 100+ repositories call it by tag. Breakage here is
       # fleet-wide, so it is checked on every change.
